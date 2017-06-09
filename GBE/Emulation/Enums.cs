@@ -12,4 +12,22 @@ namespace GBE.Emulation
         SerialTxComplete = 8,
         InputSignalLow = 16
     }
+
+    [Flags]
+    enum DirectionKeys : byte
+    {
+        Right = 1,
+        Left = 2,
+        Up = 4,
+        Down = 8
+    }
+
+    [Flags]
+    enum ButtonKeys : byte
+    {
+        A = 1,
+        B = 2,
+        Select = 4,
+        Start = 8
+    }
 }

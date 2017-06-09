@@ -1,44 +1,78 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-
-namespace GBE.Emulation
+﻿namespace GBE.Emulation
 {
-    unsafe struct SpriteDotData
+    struct SpriteDotData
     {
-        private fixed byte data[16];
+        private byte[,] dotData;
 
         public byte this[int address]
         {
             get
             {
-                fixed (byte* dataPtr = data)
+                if (dotData == null)
+                    return 0;
+
+                address &= 0xFF;
+                if ((address & 1) == 0) // Even address: Low Byte
                 {
-                    return dataPtr[address & 0x0F];
+                    address >>= 1;
+                    byte value = 0;
+                    for (int i = 0; i < 8; i++)
+                    {
+                        value <<= 1;
+                        value |= (byte)(dotData[address, i] & 1); 
+                    }
+                    return value;
+                }
+                else
+                {
+                    address >>= 1;
+                    byte value = 0;
+                    for (int i = 0; i < 8; i++)
+                    {
+                        value <<= 1;
+                        value |= (byte)((dotData[address, i] >> 1) & 1);
+                    }
+                    return value;
                 }
             }
 
             set
             {
-                fixed (byte* dataPtr = data)
+                if (dotData == null && value != 0)
                 {
-                    dataPtr[address & 0x0F] = value;
+                    dotData = new byte[8, 8];
+                }
+                if (dotData != null)
+                {
+                    if ((address & 1) == 0)
+                    {
+                        address = (address & 0xFF) >> 1;
+                        for (int i = 0; i < 8; i++)
+                        {
+                            dotData[address, i] &= 2;
+                            dotData[address, i] |= (byte)((value >> (7 - i)) & 1);
+                        }
+                    }
+                    else
+                    {
+                        address = (address & 0xFF) >> 1;
+                        for (int i = 0; i < 8; i++)
+                        {
+                            dotData[address, i] &= 1;
+                            dotData[address, i] |= (byte)(((value >> (7 - i)) & 1) << 1);
+                        }
+                    }
                 }
             }
         }
 
-        public int GetColorCode(int x, int y)
+        public byte GetColorCode(int y, int x)
         {
-            byte lb, hb;
-            fixed (byte* dataPtr = data)
+            if (dotData == null)
             {
-                lb = dataPtr[y & 7];
-                hb = dataPtr[(y & 7) + 1];
+                return 0;
             }
-            x &= 7;
-            return ((lb >> x) & 1) | (x == 0 ? ((hb & 1) << 1) : ((hb >> (x - 1)) & 2));
+            return dotData[y & 7, x & 7];
         }
     }
 }

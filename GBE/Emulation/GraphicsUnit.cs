@@ -7,6 +7,10 @@ namespace GBE.Emulation
 {
     class GraphicsUnit
     {
+        public const int ScreenPixelWidth = 160;
+        public const int ScreenPixelHeight = 144;
+
+
         private const int WHITE = 0;
         private const int LIGHT_GRAY = 1;
         private const int DARK_GRAY = 2;
@@ -17,12 +21,14 @@ namespace GBE.Emulation
         private int gpuClock;
 
         // GPU VRAM
-        private SpriteDotData[] charData;
+        private SpriteDotData[] objSprites = new SpriteDotData[0x80];
+        private SpriteDotData[] bgSprites = new SpriteDotData[0x80];
+        private SpriteDotData[] sharedSprites = new SpriteDotData[0x80];
 
-        private byte[,] bgMap0;
-        private byte[,] bgMap1;
+        private byte[,] bgMap0 = new byte[32, 32];
+        private byte[,] bgMap1 = new byte[32, 32];
 
-        private OAMRegister[] oam;
+        private OAMRegister[] oam = new OAMRegister[40];
 
         // GPU Registers
 
@@ -30,10 +36,10 @@ namespace GBE.Emulation
         private bool bgEnabled;
         private bool spritesEnabled;
         private bool sprites16Bit;
-        private int bgMapSelected;
-        private int bgTilesSelected;
+        private byte[,] bgMapSelected;
+        private SpriteDotData[] bgDataSelected;
         private bool windowEnabled;
-        private int windowMapSelected;
+        private byte[,] windowMapSelected;
         private bool lcdEnabled;
 
         // STAT (LCD Status) Register Flags
@@ -69,7 +75,8 @@ namespace GBE.Emulation
         private byte[] objPallet = new byte[2];
 
         // Frame Rendering
-        private Bitmap frame0, frame1;
+        private Bitmap frame0 = new Bitmap(ScreenPixelWidth, ScreenPixelHeight);
+        private Bitmap frame1 = new Bitmap(ScreenPixelWidth, ScreenPixelHeight);
         private int frameRendering;
 
         // Interrupt Events
@@ -78,6 +85,18 @@ namespace GBE.Emulation
         public event Action LCDCInterrupt;
 
         #endregion
+
+        public GraphicsUnit()
+        {
+            using (Graphics g = Graphics.FromImage(frame0))
+            {
+                g.FillRectangle(Brushes.White, 0, 0, ScreenPixelWidth, ScreenPixelHeight);
+            }
+            using (Graphics g = Graphics.FromImage(frame0))
+            {
+                g.FillRectangle(Brushes.White, 0, 0, ScreenPixelWidth, ScreenPixelHeight);
+            }
+        }
 
         #region Memory Access
 
@@ -88,10 +107,10 @@ namespace GBE.Emulation
                 return (byte)((bgEnabled ? 1 : 0) |
                     (spritesEnabled ? 2 : 0) |
                     (sprites16Bit ? 4 : 0) |
-                    (bgMapSelected << 3) |
-                    (bgTilesSelected << 4) |
+                    (bgMapSelected == bgMap0 ? 0 : 8) |
+                    (bgDataSelected == bgSprites ? 0 : 0x10) |
                     (windowEnabled ? 0x20 : 0) |
-                    (windowMapSelected << 6) |
+                    (windowMapSelected == bgMap0 ? 0 : 0x40) |
                     (lcdEnabled ? 0x80 : 0));
             }
 
@@ -100,11 +119,16 @@ namespace GBE.Emulation
                 bgEnabled = (value & 1) != 0;
                 spritesEnabled = (value & 2) != 0;
                 sprites16Bit = (value & 4) != 0;
-                bgMapSelected = (value >> 3) & 1;
-                bgTilesSelected = (value >> 4) & 1;
+                bgMapSelected = (value & 8) == 0 ? bgMap0 : bgMap1;
+                bgDataSelected = (value & 0x01) == 0 ? bgSprites : objSprites;
                 windowEnabled = (value & 0x20) != 0;
-                windowMapSelected = (value >> 6) & 1;
+                windowMapSelected = (value & 0x40) == 0 ? bgMap0 : bgMap1;
                 lcdEnabled = (value & 0x80) != 0;
+
+                //if (!lcdEnabled)
+                //{
+
+                //}
             }
         }
 
@@ -151,10 +175,10 @@ namespace GBE.Emulation
 
                     switch (address & 3)
                     {
-                        case 0: return oam[address & 0xFF].CoordY;
-                        case 1: return oam[address & 0xFF].CoordX;
-                        case 2: return oam[address & 0xFF].SpriteCode;
-                        case 3: return oam[address & 0xFF].Attributes;
+                        case 0: return oam[(address >> 2) & 0xFF].CoordY;
+                        case 1: return oam[(address >> 2) & 0xFF].CoordX;
+                        case 2: return oam[(address >> 2) & 0xFF].SpriteCode;
+                        case 3: return oam[(address >> 2) & 0xFF].Attributes;
                     }
                 }
                 else if (address >= 0x8000 && address < 0xA000)
@@ -162,9 +186,17 @@ namespace GBE.Emulation
                     if (lcdEnabled && gpuMode == GPUMode.VRAMRead)
                         return 0;
 
-                    if (address < 0x9800) // Background and Sprite Character Data
+                    if (address < 0x8800) // Background and Sprite Character Data
                     {
-                        return charData[(address >> 4) & 0x1FF][address & 15];
+                        return objSprites[(address >> 4) & 0x7F][address & 15];
+                    }
+                    else if (address < 0x9000)
+                    {
+                        return sharedSprites[(address >> 4) & 0x7F][address & 15];
+                    }
+                    else if (address < 0x9800)
+                    {
+                        return bgSprites[(address >> 4) & 0x7F][address & 15];
                     }
                     else if (address < 0x9C00)
                     {
@@ -188,7 +220,7 @@ namespace GBE.Emulation
                         case 1: STATReg = value; break;
                         case 2: SCY = value; break;
                         case 3: SCX = value; break;
-                        case 4: LY = value; break;
+                        //case 4: LY = value; break;
                         case 5: LYC = value; break;
                         case 6: DMA = value; break;
                         case 7: bgPallet = value; break;
@@ -204,12 +236,13 @@ namespace GBE.Emulation
                     if (lcdEnabled && (gpuMode == GPUMode.OAMRead || gpuMode == GPUMode.VRAMRead))
                         return;
 
+                    address &= 0xFF;
                     switch (address & 3)
                     {
-                        case 0: oam[address & 0xFF].CoordY = value; break;
-                        case 1: oam[address & 0xFF].CoordX = value; break;
-                        case 2: oam[address & 0xFF].SpriteCode = value; break;
-                        case 3: oam[address & 0xFF].Attributes = value; break;
+                        case 0: oam[address >> 2].CoordY = value; break;
+                        case 1: oam[address >> 2].CoordX = value; break;
+                        case 2: oam[address >> 2].SpriteCode = value; break;
+                        case 3: oam[address >> 2].Attributes = value; break;
                     }
                 }
                 else if (address >= 0x8000 && address < 0xA000)
@@ -217,9 +250,17 @@ namespace GBE.Emulation
                     if (lcdEnabled && gpuMode == GPUMode.VRAMRead)
                         return;
 
-                    if (address < 0x9800) // Background and Sprite Character Data
+                    if (address < 0x8800) // Background and Sprite Character Data
                     {
-                        charData[(address >> 4) & 0x1FF][address & 15] = value;
+                        objSprites[(address >> 4) & 0x7F][address & 15] = value;
+                    }
+                    else if (address < 0x9000)
+                    {
+                        sharedSprites[(address >> 4) & 0x7F][address & 15] = value;
+                    }
+                    else if (address < 0x9800)
+                    {
+                        bgSprites[(address >> 4) & 0x7F][address & 15] = value;
                     }
                     else if (address < 0x9C00)
                     {
@@ -239,11 +280,6 @@ namespace GBE.Emulation
 
         public void Reset()
         {
-            charData = new SpriteDotData[0x180];
-            bgMap0 = new byte[32, 32];
-            bgMap1 = new byte[32, 32];
-            oam = new OAMRegister[40];
-
             LCDCReg = 0;
             STATReg = 0;
             SCY = 0;
@@ -265,7 +301,9 @@ namespace GBE.Emulation
             if (!lcdEnabled)
             {
                 gpuClock = 0;
+                LY = 0;
                 gpuMode = GPUMode.OAMRead;
+                return;
             }
 
             switch (gpuMode)
@@ -342,12 +380,12 @@ namespace GBE.Emulation
                 case GPUMode.OAMRead:
                     if (gpuClock >= 20)
                     {
-                        renderTask.Wait(); // Wait for sprite load to finish
+                        renderTask?.Wait(); // Wait for sprite load to finish
                         gpuClock -= 20;
 
                         // Start loading background data
                         gpuMode = GPUMode.VRAMRead;
-                        renderTask = Task.Run(() => PreRenderLine());
+                        renderTask = Task.Run(() => PreRender());
                     }
                     break;
 
@@ -368,27 +406,215 @@ namespace GBE.Emulation
             }
         }
 
+        public Image GetFrame()
+        {
+            if (frameRendering == 0)
+            {
+                return frame1;
+            }
+            return frame0;
+        }
+
         #endregion
 
         #region Render Task
 
         private Task renderTask;
-        private byte[,] renderBuf = new byte[144, 160];
+        private byte[,] renderBuf = new byte[ScreenPixelHeight, ScreenPixelWidth];
         private List<int> spritesList = new List<int>(10);
+        private byte[] bgPixels = new byte[ScreenPixelWidth];
+
+        private Pen[] penColors = new Pen[]
+        {
+            Pens.White,
+            Pens.Silver,
+            Pens.DimGray,
+            Pens.Black
+        };
 
         private void LoadSpriteData()
         {
+            spritesList.Clear();
 
+            if (!spritesEnabled)
+            {
+                return;
+            }
+
+            // Determine which sprites are on this line
+            for (int i = 0; i < oam.Length; i++)
+            {
+                int y = oam[i].CoordY - 16;
+                
+                if (sprites16Bit && LY >= y && LY < y + 16)
+                {
+                    spritesList.Add(i);
+                }
+                else if (LY >= y && LY < y + 8)
+                {
+                    spritesList.Add(i);
+                }
+
+                // Can only draw up to 10 sprites per line
+                if (spritesList.Count == 10)
+                {
+                    break;
+                }
+            }
+
+            // Determine priority order by sorting the sprites by thier x-coordinate
+            for (int i = 1; i < spritesList.Count; i++)
+            {
+                int j = i;
+                while (j > 0 && (oam[spritesList[j]].CoordX < oam[spritesList[j - 1]].CoordX))
+                {
+                    int tmp = spritesList[j];
+                    spritesList[j] = spritesList[j - 1];
+                    spritesList[--j] = tmp;
+                }
+            }
         }
 
-        private void PreRenderLine()
+        private void PreRender()
         {
+            // Load and render background
+            if (bgEnabled)
+            {
+                byte bgy = (byte)(SCY + LY);
+                byte bgx = SCX;
 
+                int spriteCode = bgMapSelected[bgy >> 3, bgx >> 3];
+                SpriteDotData dotData = spriteCode > 0x80 ? sharedSprites[spriteCode & 0x7F] : bgDataSelected[spriteCode & 0x7F];
+
+                for (int sx = 0; sx < ScreenPixelWidth; sx++)
+                {
+                    byte colorCode = dotData.GetColorCode(bgy, bgx);
+
+                    bgPixels[sx] = colorCode;
+                    renderBuf[LY, sx] = (byte)((bgPallet >> (colorCode * 2)) & 3);
+                    bgx++;
+
+                    if ((bgx & 7) == 0)
+                    {
+                        spriteCode = bgMapSelected[bgy >> 3, bgx >> 3];
+                        dotData = spriteCode > 0x80 ? sharedSprites[spriteCode & 0x7F] : bgDataSelected[spriteCode & 0x7F];
+                    }
+                }
+            }
+            else
+            {
+                // When disabled, the background is set to white
+                for (int sx = 0; sx < ScreenPixelWidth; sx++)
+                {
+                    bgPixels[sx] = 0;
+                    renderBuf[LY, sx] = 0;
+                }
+            }
+
+            // Load and render window
+            if (windowEnabled && WY <= LY)
+            {
+                byte wy = (byte)(LY - WY);
+                byte wx = 0;
+
+                int spriteCode = windowMapSelected[wy >> 3, 0];
+                SpriteDotData dotData = spriteCode > 0x80 ? sharedSprites[spriteCode & 0x7F] : bgDataSelected[spriteCode & 0x7F];
+
+                for (int sx = ((WX < 7) ? 0 : WX - 7); sx < ScreenPixelWidth; sx++)
+                {
+                    byte colorCode = dotData.GetColorCode(wy, wx);
+
+                    bgPixels[sx] = colorCode;
+                    renderBuf[LY, sx] = (byte)((bgPallet >> (colorCode * 2)) & 3);
+                    wx++;
+
+                    if ((wx & 7) == 0)
+                    {
+                        spriteCode = windowMapSelected[wy >> 3, wx >> 3];
+                        dotData = spriteCode > 0x80 ? sharedSprites[spriteCode & 0x7F] : bgDataSelected[spriteCode & 0x7F];
+                    }
+                }
+            }
+
+            // Render sprites onto background
+            if (spritesEnabled)
+            {
+                for (int i = spritesList.Count - 1; i >= 0; i--)
+                {
+                    OAMRegister sprite = oam[spritesList[i]];
+
+                    int spy = LY - (sprite.CoordY - 16); // sprite dot coordinate
+                    if (sprite.VerticalFlip)
+                    {
+                        spy = sprites16Bit ? 15 - spy : 7 - spy;
+                    }
+                    
+                    if (sprites16Bit && spy >= 8)
+                    {
+                        sprite.SpriteCode++;
+                        spy -= 8;
+                    }
+                    SpriteDotData dotData = (sprite.SpriteCode < 0x80) ?
+                        objSprites[sprite.SpriteCode] : sharedSprites[sprite.SpriteCode & 0x7F];
+
+                    int screenx = sprite.CoordX - 8;
+
+                    // draw the sprite
+                    for (int spx = 0; spx < 8; spx++, screenx++)
+                    {
+                        // Ignore pixels that are off the screen
+                        if (screenx < 0)
+                            continue;
+                        if (screenx >= ScreenPixelWidth)
+                            break;
+
+                        byte colorCode = dotData.GetColorCode(sprite.HorizontalFlip ? 7 - spx : spx, spy);
+
+                        if (colorCode != 0) // 0 is transparent
+                        {
+                            // Override the pixel if the sprite has priority, or the background 
+                            // color code is transparent
+                            if (!sprite.BGPriority || bgPixels[screenx] == 0)
+                            {
+                                renderBuf[LY, screenx] = (byte)((objPallet[sprite.Pallet] >> (colorCode * 2)) & 3) ;
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         private void RenderFrame()
         {
+            Bitmap frame = frameRendering == 0 ? frame0 : frame1;
+            Graphics g = Graphics.FromImage(frame);
 
+            if (lcdEnabled)
+            {
+                for (int y = 0; y < ScreenPixelHeight; y++)
+                {
+                    int lineStart = 0;
+                    int colorCode = renderBuf[y, 0];
+
+                    for (int x = 1; x < ScreenPixelWidth; x++)
+                    {
+                        if (colorCode != renderBuf[y, x])
+                        {
+                            // Draw the line and start new color
+                            g.DrawLine(penColors[colorCode], lineStart, y, x - 1, y);
+
+                            lineStart = x;
+                            colorCode = renderBuf[y, x];
+                        }
+                    }
+
+                    g.DrawLine(penColors[colorCode], lineStart, y, ScreenPixelWidth - 1, y);
+                }
+            }
+
+            g.Dispose();
+
+            frameRendering = frameRendering == 0 ? 1 : 0;
         }
 
         #endregion

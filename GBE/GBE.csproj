@@ -54,6 +54,7 @@
     <Compile Include="Emulation\Cartridges\CartROMOnly.cs" />
     <Compile Include="Emulation\Enums.cs" />
     <Compile Include="Emulation\GraphicsUnit.cs" />
+    <Compile Include="Emulation\Joypad.cs" />
     <Compile Include="Emulation\OAMRegister.cs" />
     <Compile Include="Emulation\SoundUnit.cs" />
     <Compile Include="Emulation\SpriteDotData.cs" />
@@ -65,8 +66,14 @@
       <DependentUpon>GameBoyEmulator.cs</DependentUpon>
     </Compile>
     <Compile Include="Emulation\MemoryDispatcher.cs" />
-    <Compile Include="Emulation\Z80Processor.cs" />
     <Compile Include="Emulation\Z80Processor.Instructions.cs" />
+    <Compile Include="Emulation\Z80Processor.cs" />
+    <Compile Include="GBEDebugger.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="GBEDebugger.Designer.cs">
+      <DependentUpon>GBEDebugger.cs</DependentUpon>
+    </Compile>
     <Compile Include="GoodBoyEUI.cs">
       <SubType>Form</SubType>
     </Compile>
@@ -75,6 +82,20 @@
     </Compile>
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
+    <Compile Include="TestROMs\TestROMs.Designer.cs">
+      <AutoGen>True</AutoGen>
+      <DesignTime>True</DesignTime>
+      <DependentUpon>TestROMs.resx</DependentUpon>
+    </Compile>
+    <EmbeddedResource Include="Emulation\GameBoyEmulator.resx">
+      <DependentUpon>GameBoyEmulator.cs</DependentUpon>
+    </EmbeddedResource>
+    <EmbeddedResource Include="GBEDebugger.resx">
+      <DependentUpon>GBEDebugger.cs</DependentUpon>
+    </EmbeddedResource>
+    <EmbeddedResource Include="GoodBoyEUI.resx">
+      <DependentUpon>GoodBoyEUI.cs</DependentUpon>
+    </EmbeddedResource>
     <EmbeddedResource Include="Properties\Resources.resx">
       <Generator>ResXFileCodeGenerator</Generator>
       <LastGenOutput>Resources.Designer.cs</LastGenOutput>
@@ -84,6 +105,10 @@
       <AutoGen>True</AutoGen>
       <DependentUpon>Resources.resx</DependentUpon>
     </Compile>
+    <EmbeddedResource Include="TestROMs\TestROMs.resx">
+      <Generator>ResXFileCodeGenerator</Generator>
+      <LastGenOutput>TestROMs.Designer.cs</LastGenOutput>
+    </EmbeddedResource>
     <None Include="Properties\Settings.settings">
       <Generator>SettingsSingleFileGenerator</Generator>
       <LastGenOutput>Settings.Designer.cs</LastGenOutput>
@@ -93,6 +118,7 @@
       <DependentUpon>Settings.settings</DependentUpon>
       <DesignTimeSharedInput>True</DesignTimeSharedInput>
     </Compile>
+    <None Include="TestROMs\Tetris.gb" />
   </ItemGroup>
   <ItemGroup>
     <None Include="App.config" />

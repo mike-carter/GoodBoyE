@@ -1,5 +1,4 @@
-﻿using System;
-using System.IO;
+﻿using System.IO;
 using GBE.Emulation.Cartridges;
 
 namespace GBE.Emulation
@@ -21,7 +20,16 @@ namespace GBE.Emulation
                     case 0:
                         return new CartROMOnly(stream);
 
-                    case 0x13:
+                    case 1:
+                    case 2:
+                    case 3:
+                        return new CartMBC1(stream);
+
+                    case 15:
+                    case 16:
+                    case 17:
+                    case 18:
+                    case 19:
                         return new CartMBC3(stream);
                 }
             }
