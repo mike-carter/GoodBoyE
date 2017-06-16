@@ -2,7 +2,7 @@
 
 namespace GBE.Emulation
 {
-    class Timer
+    class TimerUnit
     {
         private byte divReg = 0;
         private byte countReg = 0;

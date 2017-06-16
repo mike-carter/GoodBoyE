@@ -30,11 +30,16 @@
         {
             this.components = new System.ComponentModel.Container();
             this.frameTimer = new System.Windows.Forms.Timer(this.components);
+            this.syncTimer = new System.Windows.Forms.Timer(this.components);
             this.SuspendLayout();
             // 
             // frameTimer
             // 
             this.frameTimer.Tick += new System.EventHandler(this.frameTimer_Tick);
+            // 
+            // emulationTimer
+            // 
+            this.syncTimer.Tick += new System.EventHandler(this.emulationTimer_Tick);
             // 
             // GameBoyEmulator
             // 
@@ -51,5 +56,6 @@
         #endregion
 
         private System.Windows.Forms.Timer frameTimer;
+        private System.Windows.Forms.Timer syncTimer;
     }
 }

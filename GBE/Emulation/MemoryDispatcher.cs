@@ -1,7 +1,26 @@
-﻿namespace GBE.Emulation
+﻿using System.Threading.Tasks;
+
+namespace GBE.Emulation
 {
+    [System.Flags]
+    internal enum InterruptFlags : byte
+    {
+        None = 0,
+        VerticalBlank = 1,
+        LCDCStatus = 2,
+        TimerOverflow = 4,
+        SerialTxComplete = 8,
+        InputSignalLow = 16
+    }
+
+    /// <summary>
+    /// Component used by the CPU to access memory.
+    /// </summary>
     class MemoryDispatcher
     {
+        /// <summary>
+        /// Gameboy BIOS. 
+        /// </summary>
         private static readonly byte[] BIOS =
         {
             0x31, 0xFE, 0xFF, 0xAF, 0x21, 0xFF, 0x9F, 0x32, 0xCB, 0x7C, 0x20, 0xFB, 0x21, 0x26, 0xFF, 0x0E,
@@ -24,26 +43,32 @@
 
         public Cartridge Cartridge = null;
 
-        internal bool BIOSLoaded;
+        internal bool BIOSLoaded = false;
 
-        private byte[] InternalRAM; // Internal gameboy RAM 
+        private byte[] InternalRAM = new byte[0x2000]; // Internal gameboy RAM
 
-        private byte[] ZeroRAM; // Zero-Page RAM, also internal.
+        private byte[] HRAM = new byte[0x7F]; // HRAM, a.k.a. Zero-Page RAM, also internal.
 
         // Addressable Registers
-        internal byte PortsReg; // Ports P10 ~ P15 register (FF00)
         internal byte SerialTxReg; // Serial communications register
         internal byte SerialControlReg;
         internal InterruptFlags IFlagsReg; // Interrupts register
         internal InterruptFlags IEnableReg;
 
-        public Timer Timer;
-
-        public GraphicsUnit GraphicsUnit;
-
+        // System Components
+        public TimerUnit Timer;
+        public LCDController GraphicsUnit;
         public SoundUnit SoundUnit;
+        public Joypad Joypad;
 
-        public MemoryDispatcher(GraphicsUnit graphics, SoundUnit sound, Timer timer)
+        // DMA Transfer
+        private byte DMAStart; // DMA Register
+        private int DMACurrentOffset;
+        private int DMAClock;
+        private bool DMAInProcess = false;
+
+
+        public MemoryDispatcher(LCDController graphics, SoundUnit sound, TimerUnit timer, Joypad joypad)
         {
             Timer = timer;
             Timer.TimerOverflow += Timer_TimerOverflow;
@@ -53,192 +78,273 @@
             GraphicsUnit.LCDCInterrupt += Gu_LCDCInterrupt;
 
             SoundUnit = sound;
-        }
-        
-        public void Reset()
-        {
-            InternalRAM = new byte[8192];
-            ZeroRAM = new byte[127];
 
-            Timer.Reset();
-
-            if (Cartridge != null)
-            {
-                Cartridge.Reset();
-            }
-
-            BIOSLoaded = true;
+            Joypad = joypad;
+            Joypad.JoypadInterrupt += Joypad_JoypadInterrupt;
         }
 
         public byte this[int address]
         {
             get
             {
-                address &= 0xFFFF;
+                address &= 0xFFFF; // Mostly just a sanity check
+
+                if (address >= 0xFF80 && address < 0xFFFF) // HRAM
+                {
+                    return HRAM[address & 0x7F];
+                }
+
+                // During DMA, only HRAM is accessable
+                else if (DMAInProcess)
+                {
+                    return 0;
+                }
+
                 if (address >= 0xF000)
                 {
-                    if (address >= 0xFF00) // FF00 ~ FFFF : IO and Hardware registers; Zero-Page RAM
+                    if (address >= 0xFF00) // IO Registers
                     {
                         switch (address & 0xF0)
                         {
+                            default: return 0;
+
                             case 0:
                                 switch (address & 0x0F)
                                 {
-                                    case 0xFF00: return PortsReg;
-                                    case 0xFF01: return SerialTxReg;
-                                    case 0xFF02: return SerialControlReg;
-                                    case 0xFF04: return Timer.DivisionRegister;
-                                    case 0xFF05: return Timer.CountRegister;
-                                    case 0xFF06: return Timer.ModuloRegister;
-                                    case 0xFF07: return Timer.ControlRegister;
-                                    case 0xFF0F: return (byte)IFlagsReg;
-                                    default: return 0;
+                                    case 0: return Joypad.P1Register;
+                                    case 1: return SerialTxReg;
+                                    case 2: return SerialControlReg;
+                                    //   3: unused
+                                    case 4: return Timer.DivisionRegister;
+                                    case 5: return Timer.CountRegister;
+                                    case 6: return Timer.ModuloRegister;
+                                    case 7: return Timer.ControlRegister;
+                                    //   8 - 14 unused
+                                    case 15: return (byte)IFlagsReg;
                                 }
+                                return 0;
 
-                            case 0x10:
+                            case 0x10: // Sound Registers
                             case 0x20:
                             case 0x30:
                                 return 0; //su.ReadByte(address);
 
-                            case 0x40:
-                                return GraphicsUnit[address];
+                            case 0x40: // LCD registers
+                                switch (address & 0x0F)
+                                {
+                                    case 0: return GraphicsUnit.LCDCReg;
+                                    case 1: return GraphicsUnit.STATReg;
+                                    case 2: return GraphicsUnit.SCY;
+                                    case 3: return GraphicsUnit.SCX;
+                                    case 4: return GraphicsUnit.LCDYCoord;
+                                    case 5: return GraphicsUnit.LYC;
+                                    case 6: return DMAStart;
+                                    case 7: return GraphicsUnit.BGPallet;
+                                    case 8: return GraphicsUnit.ObjPallets[0];
+                                    case 9: return GraphicsUnit.ObjPallets[1];
+                                    case 10: return GraphicsUnit.WY;
+                                    case 11: return GraphicsUnit.WX;
+                                }
+                                return 0;
 
-                            case 0xF0:
-                                if (address == 0xFFFF)
-                                    return (byte)IEnableReg;
-                                else
-                                    return ZeroRAM[address & 0x7F];
-
-                            case 0x80:
-                            case 0x90:
-                            case 0xA0:
-                            case 0xB0:
-                            case 0xC0:
-                            case 0xD0:
-                            case 0xE0:
-                                return ZeroRAM[address & 0x7F];
-
-                            default: return 0;
+                            case 0xF0: return (byte)IEnableReg;
                         }
                     }
-                    // The only addresses that are interesting in the FExx space are the Sprite Attribute Registers (OAM)
-                    // in the GPU. The rest is intentionally empty and should not be used.
+
+                    // Addresses 0xFE00 - 0xFE9A is reserved for the graphics OAM.
+                    // The rest is intentionally empty and should not be used.
+                    else if (address >= 0xFEA0)
+                    {
+                        return 0;
+                    }
                     else if (address >= 0xFE00)
                     {
-                        return address < 0xFEA0 ? GraphicsUnit[address] : (byte)0;
+                        return GraphicsUnit.ReadOAM(address);
                     }
 
                     // F000-FDFF echos D000-DDFF
                     return InternalRAM[(address & 0x1FFF)];
                 }
-                else if (address >= 0xC000) // C000-EFFF - Internal RAM and Internal RAM Echo
+
+                else if (address >= 0xC000) // C000 - EFFF: Internal RAM and Internal RAM Echo
                 {
                     // C000 ~ DFFF is the actual internal RAM
                     // E000 ~ FDFF is an echo of the RAM, so we just read from the same place
                     return InternalRAM[(address & 0x1FFF)];
                 }
-                else if (address >= 0xA000) // A000 ~ BFFF : Switchable RAM bank, i.e. External/Cartridge RAM
-                {
-                    return Cartridge[address];
-                }
-                else if (address >= 0x8000) // Graphics VRAM
-                {
-                    return GraphicsUnit[address];
-                }
-                else if ((address < 0x100) && BIOSLoaded)
-                    return BIOS[address];
 
-                return Cartridge[address];
+                else if (address >= 0xA000) // A000 - BFFF: Switchable RAM bank, i.e. External/Cartridge RAM
+                {
+                    return Cartridge.ReadRAM(address);
+                }
+
+                else if (address >= 0x8000) //  Graphics VRAM
+                {
+                    return GraphicsUnit.ReadVRAM(address);
+                }
+
+                // Cartidge ROM
+                else if ((address < 0x100) && BIOSLoaded) 
+                {
+                    return BIOS[address];
+                }
+
+                return Cartridge.ReadROM(address);
             }
 
             set
             {
-                address &= 0xFFFF;
+                address &= 0xFFFF; // Sanity check again
+
+                if (address >= 0xFF80 && address < 0xFFFF) // HRAM
+                {
+                    HRAM[address & 0x7F] = value;
+                }
+
+                // During DMA, only HRAM is accessable
+                else if (DMAInProcess)
+                {
+                    return;
+                }
+
                 if (address >= 0xF000)
                 {
-                    if (address >= 0xFF00) // FF00 ~ FFFF : IO and Hardware registers; Zero-Page RAM
+                    if (address >= 0xFF00) // IO Registers
                     {
                         switch (address & 0xF0)
                         {
                             case 0:
                                 switch (address & 0x0F)
                                 {
-                                    case 0xFF00: PortsReg = value; return;
-                                    case 0xFF01: SerialTxReg = value; return;
-                                    case 0xFF02: SerialControlReg = value; return;
-                                    case 0xFF04: Timer.DivisionRegister = value; return;
-                                    case 0xFF05: Timer.CountRegister = value; return;
-                                    case 0xFF06: Timer.ModuloRegister = value; return;
-                                    case 0xFF07: Timer.ControlRegister = value; return;
-                                    case 0xFF0F: IFlagsReg = (InterruptFlags)value; return;
+                                    case 0: Joypad.P1Register = value; break;
+                                    case 1: SerialTxReg = value; break;
+                                    case 2: SerialControlReg = value; break;
+                                    //   3: unused
+                                    case 4: Timer.DivisionRegister = value; break;
+                                    case 5: Timer.CountRegister = value; break;
+                                    case 6: Timer.ModuloRegister = value; break;
+                                    case 7: Timer.ControlRegister = value; break;
+                                    //   8 - 14 unused
+                                    case 15: IFlagsReg = (InterruptFlags)value; break;
                                 }
-                                break;
+                                return;
 
-                            case 0x10:
+                            case 0x10: // Sound Registers
                             case 0x20:
                             case 0x30:
-                                //su.WriteByte(address, value);
-                                break;
+                                return; //su.WriteByte(address, value);
 
-                            case 0x40:
-                                GraphicsUnit[address] = value;
-                                break;
-                                
+                            case 0x40: // LCD registers
+                                switch (address & 0x0F)
+                                {
+                                    case 0: GraphicsUnit.LCDCReg = value; break;
+                                    case 1: GraphicsUnit.STATReg = value; break;
+                                    case 2: GraphicsUnit.SCY = value; break;
+                                    case 3: GraphicsUnit.SCX = value; break;
+                                    //   4: LY (read-only)
+                                    case 5: GraphicsUnit.LYC = value; break;
+                                    case 6:
+                                        DMAStart = value;
+                                        StartDMATransfer();
+                                        break;
+                                    case 7: GraphicsUnit.BGPallet = value; break;
+                                    case 8: GraphicsUnit.ObjPallets[0] = value; break;
+                                    case 9: GraphicsUnit.ObjPallets[1] = value; break;
+                                    case 10: GraphicsUnit.WY = value; break;
+                                    case 11: GraphicsUnit.WX = value; break;
+                                }
+                                return;
+
                             case 0x50:
-                                BIOSLoaded = value == 0;
+                                if (BIOSLoaded)
+                                {
+                                   BIOSLoaded = value == 0;
+                                }
                                 break;
 
                             case 0xF0:
                                 if (address == 0xFFFF)
-                                    IEnableReg = (InterruptFlags)value;
-                                else
-                                    ZeroRAM[address & 0x7F] = value;
-                                break;
-
-                            case 0x80:
-                            case 0x90:
-                            case 0xA0:
-                            case 0xB0:
-                            case 0xC0:
-                            case 0xD0:
-                            case 0xE0:
-                                if (address >= 0xFF80)
                                 {
-                                    ZeroRAM[address & 0x7F] = value;
+                                    IEnableReg = (InterruptFlags)value;
                                 }
                                 break;
                         }
                     }
-                    // The only addresses that are interesting in the FExx space are the Sprite Attribute Registers (OAM)
-                    // in the GPU. The rest is intentionally empty and should not be used.
+
+                    // Addresses 0xFE00 - 0xFE9A is reserved for the graphics OAM.
+                    // The rest is intentionally empty and should not be used.
                     else if (address >= 0xFE00 && address < 0xFEA0)
                     {
-                        GraphicsUnit[address] = value;
+                        GraphicsUnit.WriteOAM(address, value);
                     }
+
+                    // F000-FDFF echos D000-DDFF and is read-only
                 }
-                else if (address >= 0xC000) // C000-EFFF - Internal RAM and Internal RAM Echo
+                
+                else if (address >= 0xC000 && address < 0xE000) // C000-DFFF - Internal RAM
                 {
-                    // C000 ~ DFFF is the actual internal RAM
-                    // E000 ~ FDFF is an echo of the RAM, so we just read from the same place
-                    InternalRAM[(address & 0x1FFF)] = value;
+                    switch (address)
+                    {
+                        case 0xc004:
+                            break;
+                    }
+
+                    InternalRAM[address & 0x1FFF] = value;
                 }
-                else if (address >= 0xA000) // A000-BFFF : External/Cartridge RAM
+
+                else if (address >= 0xA000 && address < 0xC000) // A000-BFFF : External/Cartridge RAM
                 {
-                    Cartridge[address] = value;
+                    Cartridge.WriteRAM(address, value);
                 }
-                else if (address >= 0x8000) // Graphics VRAM
+
+                else if (address >= 0x8000 && address < 0xA000) // Graphics VRAM
                 {
-                    GraphicsUnit[address] = value;
+                    GraphicsUnit.WriteVRAM(address, value);
                 }
-                else
+
+                else if (address < 0x8000)
                 {
-                    Cartridge[address] = value;
+                    Cartridge.WriteToRegister(address, value);
                 }
             }
         }
 
+        public void DMAClockTick(int ticks)
+        {
+            if (DMAInProcess)
+            {
+                DMAClock += ticks;
+
+                // The DMA runs for 160 milliseconds, which we assume to be around 80 clock cycles
+                if (DMAClock > 80)
+                {
+                    DMAInProcess = false;
+                }
+
+                while (DMACurrentOffset < (DMAClock * 2) && DMACurrentOffset < 160)
+                {
+                    DMAInProcess = false;
+                    GraphicsUnit.WriteOAM(DMACurrentOffset, this[(DMAStart << 8) + DMACurrentOffset]);
+                    DMAInProcess = true;
+                    DMACurrentOffset++;
+                }
+            }
+        }
+
+        private void StartDMATransfer()
+        {
+            DMAClock = 0;
+            DMACurrentOffset = 0;
+            DMAInProcess = true;
+        }
+
 
         #region Interrupt Events
+
+        private void Joypad_JoypadInterrupt()
+        {
+            IFlagsReg |= InterruptFlags.InputSignalLow;
+        }
 
         private void Timer_TimerOverflow()
         {

@@ -4,7 +4,7 @@ namespace GBE.Emulation
 {
     partial class Z80Processor
     {
-        private struct Instruction
+        internal struct Instruction
         {
             public Instruction(string dis, ushort oplen = 0, ushort ticks = 1, Action<int> op = null)
             {
@@ -70,7 +70,7 @@ namespace GBE.Emulation
                 new Instruction("INC HL", 0, 2, (n) => RegHL++),
                 new Instruction("INC H", 0, 1, (n) => RegH = Inc(RegH)),
                 new Instruction("DEC H", 0, 1, (n) => RegH = Dec(RegH)),
-                new Instruction("LD H, {0:X2}", 1, 2, (n) => RegD = (byte)n),
+                new Instruction("LD H, {0:X2}", 1, 2, (n) => RegH = (byte)n),
                 new Instruction("DAA", 0, 1, (n) => DecimalAdjustA()),
                 new Instruction("JR Z, {0:X2}", 1, 2, (n) => JumpRelative((byte)n, ZeroFlag)),
                 new Instruction("ADD HL, HL", 0, 2, (n) => AddHL(RegHL)),
@@ -247,7 +247,7 @@ namespace GBE.Emulation
                 new Instruction("RET NZ", 0, 2, (n) => Return(!ZeroFlag)),
                 new Instruction("POP BC", 0, 3, (n) => RegBC = PopWord()),
                 new Instruction("JP NZ, {0:X4}", 2, 3, (n) => JumpTo(n, !ZeroFlag)),
-                new Instruction("JP {0:X4}", 2, 3, (n) => JumpTo(n)),
+                new Instruction("JP {0:X4}", 2, 4, (n) => JumpTo(n)),
                 new Instruction("CALL NZ {0:X4}", 2, 3, (n) => Call(n, !ZeroFlag)),
                 new Instruction("PUSH BC", 0, 4, (n) => PushWord(RegBC)),
                 new Instruction("ADD A, {0:X2}", 1, 2, (n) => AddA((byte)n)),
@@ -289,7 +289,7 @@ namespace GBE.Emulation
                 new Instruction("AND {0:X2}", 1, 2, (n) => AndA((byte)n)),
                 new Instruction("RST 20", 0, 4, (n) => Call(0x20)),
                 new Instruction("ADD SP, {0:X2}", 1, 4, (n) => SP = AddSP((sbyte)n)),
-                new Instruction("JP (HL)", 0, 1, (n) => JumpTo(RegHL) ),
+                new Instruction("JP (HL)", 0, 1, (n) => JumpTo(RegHL)),
                 new Instruction("LD {0:X4}, A", 2, 4, (n) => md[n] = RegA),
                 new Instruction("undefined"),
                 new Instruction("undefined"),

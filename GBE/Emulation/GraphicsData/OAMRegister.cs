@@ -1,4 +1,4 @@
-﻿namespace GBE.Emulation
+﻿namespace GBE.Emulation.GraphicsData
 {
     struct OAMRegister
     {

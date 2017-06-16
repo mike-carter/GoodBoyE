@@ -1,21 +1,29 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace GBE.Emulation
 {
-    class Joypad
+    [Flags]
+    public enum GBKeys : byte
     {
-        DirectionKeys directionsPressed;
-        ButtonKeys buttonsPressed;
+        None = 0,
+        Right = 0x10,
+        Left = 0x20,
+        Up = 0x40,
+        Down = 0x80,
+        A = 0x1,
+        B = 0x2,
+        Select = 0x4,
+        Start = 0x8,
+    }
 
-        byte P1;
+    public class Joypad
+    {
+        private GBKeys keysPressed;
+        private byte P1 = 0xFF;
 
-        public event Action JoypadInterrupt;
+        internal event Action JoypadInterrupt;
 
-        public byte P1Register
+        internal byte P1Register
         {
             get
             {
@@ -25,49 +33,33 @@ namespace GBE.Emulation
             {
                 switch (value & 0x30)
                 {
-                    case 0x10:
-                        P1 = (byte)(0xE0 | (int)directionsPressed);
+                    case 0x10: // Query direction ports
+                        P1 = (byte)(0xDF ^ (((int)keysPressed & 0x0F)));
                         break;
 
-                    case 0x20:
-                        P1 = (byte)(0xD0 | (int)buttonsPressed);
+                    case 0x20: // Query button ports
+                        P1 = (byte)(0xEF ^ (((int)keysPressed & 0xF0) >> 4));
                         break;
 
-                    case 0x30:
-                        P1 = 0xFF;
+                    case 0x30: // Reset
+                        P1 = 0xCF;
                         break;
                 }
             }
         }
 
-        public void PressDirection(DirectionKeys direction)
+        public void PressKey(GBKeys keys)
         {
-            int portValues = (int)directionsPressed & (int)buttonsPressed;
-            if ((portValues & (int)direction) == (int)direction)
+            if ((keysPressed & keys) != GBKeys.None)
             {
                 JoypadInterrupt?.Invoke();
             }
-            directionsPressed &= ~direction;
+            keysPressed |= keys;
         }
 
-        public void ReleaseDirection(DirectionKeys direction)
+        public void ReleaseKey(GBKeys keys)
         {
-            directionsPressed |= direction;
-        }
-
-        public void PressButton(ButtonKeys button)
-        {
-            int portValues = (int)directionsPressed & (int)buttonsPressed;
-            if ((portValues & (int)button) == (int)button)
-            {
-                JoypadInterrupt?.Invoke();
-            }
-            buttonsPressed &= ~button;
-        }
-
-        public void ReleaseButton(ButtonKeys button)
-        {
-            buttonsPressed |= button;
+            keysPressed &= ~keys;
         }
     }
 }

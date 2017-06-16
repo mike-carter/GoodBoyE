@@ -8,5 +8,9 @@ namespace GBE.Emulation
 {
     class SoundUnit
     {
+        public void Reset()
+        {
+
+        }
     }
 }

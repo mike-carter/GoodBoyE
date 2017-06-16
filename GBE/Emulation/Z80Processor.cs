@@ -1,33 +1,34 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace GBE.Emulation
 {
     partial class Z80Processor
     {
-        MemoryDispatcher md; // reference to memory unit
+        private MemoryDispatcher md; // reference to memory unit
 
-        Instruction[] instructionSet; // instructions decode table
+        internal readonly Instruction[] instructionSet; // instructions decode table
 
         // 16-bit registers
-        ushort PC; // program counter
-        ushort SP; // stack pointer
+        private ushort PC; // program counter
+        private ushort SP; // stack pointer
 
         // 8-Bit Registers
-        byte RegA; // Accumulator
-        int RegFlags; // Flags register
-        byte RegB;
-        byte RegC;
-        byte RegD;
-        byte RegE;
-        byte RegH;
-        byte RegL;
+        private byte RegA; // Accumulator
+        private int RegFlags; // Flags register
+        private byte RegB;
+        private byte RegC;
+        private byte RegD;
+        private byte RegE;
+        private byte RegH;
+        private byte RegL;
 
-        bool IMEFlag; // Master interrupt flag (IME)
-        bool halted;
+        private bool IMEFlag; // Master interrupt flag (IME)
+        private bool halted;
+
+        private ushort[] history = new ushort[16];
+        private int histPtr = 0;
+        private int bkpt = -1;
 
         public Z80Processor(MemoryDispatcher memory)
         {
@@ -39,7 +40,7 @@ namespace GBE.Emulation
 
         #region 16-Bit Register Access
 
-        public ushort RegAF
+        internal ushort RegAF
         {
             get { return (ushort)((RegA << 8) + RegFlags); }
             private set
@@ -49,7 +50,7 @@ namespace GBE.Emulation
             }
         }
 
-        public ushort RegBC
+        internal ushort RegBC
         {
             get { return (ushort)((RegB << 8) + RegC); }
             private set
@@ -59,7 +60,7 @@ namespace GBE.Emulation
             }
         }
 
-        public ushort RegDE
+        internal ushort RegDE
         {
             get { return (ushort)((RegD << 8) + RegE); }
             private set
@@ -69,7 +70,7 @@ namespace GBE.Emulation
             }
         }
 
-        public ushort RegHL
+        internal ushort RegHL
         {
             get { return (ushort)((RegH << 8) + RegL); }
             private set
@@ -79,12 +80,12 @@ namespace GBE.Emulation
             }
         }
 
-        public ushort RegPC
+        internal ushort RegPC
         {
             get { return PC; }
         }
 
-        public ushort RegSP
+        internal ushort RegSP
         {
             get { return SP; }
         }
@@ -101,7 +102,7 @@ namespace GBE.Emulation
         /**
          * Gets or sets the Zero flag, which indicates that the result of the last operation was zero.
          */
-        protected bool ZeroFlag
+        internal bool ZeroFlag
         {
             get { return (RegFlags & ZERO_FLAG) != 0; }
             set { RegFlags = value ? (RegFlags | ZERO_FLAG) : (RegFlags & ~ZERO_FLAG); }
@@ -111,7 +112,7 @@ namespace GBE.Emulation
          * Gets or sets the Operation flag, which indicates that the last operation was a 
          * subtraction operation.
          */
-        protected bool OpFlag
+        internal bool OpFlag
         {
             get { return (RegFlags & OP_FLAG) != 0; }
             set { RegFlags = value ? (RegFlags | OP_FLAG) : (RegFlags & ~OP_FLAG); }
@@ -120,7 +121,7 @@ namespace GBE.Emulation
         /**
          * Gets or sets the Half Carry flag, which indicates an overflow of the lower nibble of the register
          */
-        protected bool HalfCarryFlag
+        internal bool HalfCarryFlag
         {
             get { return (RegFlags & HALF_CARRY_FLAG) != 0; }
             set { RegFlags = value ? (RegFlags | HALF_CARRY_FLAG) : (RegFlags & ~HALF_CARRY_FLAG); }
@@ -129,7 +130,7 @@ namespace GBE.Emulation
         /**
          * Gets or sets the Carry flag, which indicates that the last operation resulted in an overflow.
          */
-        protected bool CarryFlag
+        internal bool CarryFlag
         {
             get { return (RegFlags & CARRY_FLAG) != 0; }
             set { RegFlags = value ? (RegFlags | CARRY_FLAG) : (RegFlags & ~CARRY_FLAG); }
@@ -139,7 +140,7 @@ namespace GBE.Emulation
 
         #endregion Properties
 
-        public void Reset()
+        public void ClearRegisters()
         {
             PC = 0;
             SP = 0;
@@ -162,22 +163,21 @@ namespace GBE.Emulation
             }
             else
             {
-#if DEBUG
+                history[histPtr] = PC;
+                histPtr = (histPtr + 1) & 15;
+
                 switch (PC)
                 {
-                    case 0x2C4:
-                        break;
-                    case 0x2C7:
-                        break;
-                    case 0x2CA:
-                        break;
-                    case 0x2f0:
+                    case 0x1fbe:
                         break;
                 }
-#endif
+                if (PC == bkpt)
+                {
+
+                }
 
                 int opcode = md[PC++];
-
+                
                 // Load immediate operand if necessary
                 int immediate = 0;
                 if (instructionSet[opcode].OperandLength > 0)
@@ -192,6 +192,7 @@ namespace GBE.Emulation
                         PC += 2;
                     }
                 }
+                
                 // Execute instruction
                 instructionSet[opcode].Operation?.Invoke(immediate);
                 ticks = instructionSet[opcode].Ticks;
@@ -239,7 +240,7 @@ namespace GBE.Emulation
             return ticks;
         }
 
-        #region Operation Methods
+        #region Operations
 
         private void Stop()
         {
@@ -396,7 +397,7 @@ namespace GBE.Emulation
         {
             RegFlags = 0;
 
-            if ((n & 0x80) == 0)
+            if ((n & 0x80) != 0)
             {
                 n <<= 1;
                 n |= 1;
@@ -428,7 +429,7 @@ namespace GBE.Emulation
         {
             RegFlags = 0;
 
-            if ((n & 1) == 0)
+            if ((n & 1) != 0)
             {
                 n >>= 1;
                 n |= 0x80;
@@ -710,6 +711,6 @@ namespace GBE.Emulation
             //}
         }
 
-        #endregion Operation Methods
+        #endregion Operations
     }
 }
